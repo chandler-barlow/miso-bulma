@@ -1,0 +1,36 @@
+# Build artifacts
+.stack-work/
+dist-newstyle/
+dist/
+
+# Executables and other build outputs
+*.o
+*.hi
+*.dyn_o
+*.dyn_hi
+*.prof
+*.tix
+*.hpc
+*.eventlog
+*.dump-*
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Editor-specific files
+*~
+.#*
+.#*#
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Other common files to ignore
+.ghci
+.history
