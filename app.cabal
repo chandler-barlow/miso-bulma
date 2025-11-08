@@ -1,0 +1,47 @@
+cabal-version:      3.0
+name:               miso-bulma
+version:            0.1.0.0
+synopsis:           miso-bulma component library
+description:        miso-bulma component library
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             dmjio
+maintainer:         code@dmj.io
+copyright:          haskell-miso @ 2025
+category:           Web
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+common warnings
+  ghc-options:
+    -funbox-strict-fields -O2 -ferror-spans -fspecialise-aggressively -Wall
+
+common wasm
+  if arch(wasm32)
+    ghc-options:
+      -no-hs-main -optl-mexec-model=reactor "-optl-Wl,--export=hs_start"
+    cpp-options:
+      -DWASM
+
+library
+  import:
+    wasm,
+    warnings
+  build-depends: base < 5, containers >= 0.7, miso
+  other-modules:
+    Bulma
+  hs-source-dirs:
+    lib
+  default-language:
+    Haskell2010
+
+executable bulma-example
+  import:
+    wasm, warnings
+  main-is:
+    Main.hs
+  build-depends: base < 5, containers >= 0.7, miso
+  hs-source-dirs:
+    app
+  default-language:
+    Haskell2010
