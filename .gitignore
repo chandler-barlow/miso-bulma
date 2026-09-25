@@ -2,6 +2,7 @@
 .stack-work/
 dist-newstyle/
 dist/
+public/
 
 # Executables and other build outputs
 *.o
