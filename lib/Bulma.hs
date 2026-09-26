@@ -1,42 +1,70 @@
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Bulma where
 
-import Data.Aeson.Types
-import Data.Maybe
-import Data.Text (Text)
-import qualified Data.Text as T
-import Prelude hiding (div)
+import Data.Aeson.Types (camelTo2)
+import Data.Maybe (listToMaybe)
 
-import Miso.Html
-import qualified Miso.Html as Html
+import Miso.Html.Element
 import qualified Miso.Html.Property as P
+import Miso.JSON.Types (Value(..))
+import Miso.String (MisoString, pack, toMisoString, unwords)
+import Miso.Types (Attribute(..), CSS(..), View)
+
+import Prelude hiding (unwords)
 
 {- |
-  The bulma stylesheet from a CDN.
-  This stylesheet also includes font awesome for icons as well.
+  A stylesheet built from a named theme on
+  [Bulmaswatch](https://jenil.github.io/bulmaswatch/), a collection of
+  free, third-party Bulma themes (e.g. @"darkly"@, @"cosmo"@,
+  @"cyborg"@ - see the Bulmaswatch site for the full list). Also
+  includes Font Awesome, for icons.
+
+  Every component in this library only ever emits standard Bulma class
+  names, so any Bulma-compatible stylesheet works here - Bulmaswatch,
+  the official Bulma build, or a custom Sass build of your own. This
+  helper just makes picking a Bulmaswatch theme by name convenient; to
+  use something else, build your own @['CSS']@ with 'Href' directly.
 -}
-bulmaStylesheet :: _
-bulmaStylesheet = 
-      [ Style "Bulma"
-      , Href "https://jenil.github.io/bulmaswatch/superhero/bulmaswatch.min.css"
-      , Href "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css"
-      ]
+bulmaswatchTheme :: MisoString -> [CSS]
+bulmaswatchTheme theme =
+  [ Href ("https://jenil.github.io/bulmaswatch/" <> theme <> "/bulmaswatch.min.css") False
+  , Href "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" False
+  ]
+
+{- |
+  The default stylesheet: the @"superhero"@ Bulmaswatch theme. See
+  'bulmaswatchTheme' to pick a different one, or supply your own
+  @['CSS']@ for a non-Bulmaswatch theme.
+-}
+bulmaStylesheet :: [CSS]
+bulmaStylesheet = bulmaswatchTheme "superhero"
 
 data BulmaModifier =
     IsPrimary
+  | IsLink
   | IsInfo
   | IsSuccess
   | IsWarning
   | IsDanger
   | IsDark
+  | IsBlack
+  | IsWhite
+  | IsLight
+  | IsText
 
   | IsCentered
   | IsActive
+  | IsCurrent
+  | IsSelected
+  | IsHovered
+  | IsFocused
+  | IsHoverable
   | IsTab
   | IsLeft
   | IsRight
   | IsCenter
+  | IsMobile
 
   | IsThreeQuarters
   | IsTwoThirds
@@ -47,6 +75,9 @@ data BulmaModifier =
   | IsBordered
   | IsStriped
   | IsNarrow
+  | IsHorizontal
+  | IsExpanded
+  | IsNormal
 
   | IsSmall
   | IsMedium
@@ -56,15 +87,20 @@ data BulmaModifier =
   | IsInverted
   | IsLoading
   | IsDisabled
+  | IsTransparent
+  | IsRounded
+  | IsDelete
 
   | IsGrouped
   | IsGapless
-  | IsMultline
+  | IsMultiline
+  | IsMultiple
 
   | IsBold
   | IsNarrowMobile
   | IsNarrowTablet
   | IsNarrowDesktop
+  | IsHiddenDesktop
 
   | IsFullheight
   | IsFullwidth
@@ -77,10 +113,7 @@ data BulmaModifier =
 
   | IsBoxed
   | IsToggle
-
-  | Notification
-  | NavMenu
-  | Help
+  | IsToggleRounded
 
   | Is1
   | Is2
@@ -109,37 +142,43 @@ data BulmaModifier =
   | Is128By128
 
   | HasTextCentered
+  | HasTextInfo
   | HasAddons
   | HasIcon
   | HasIconRight
+  | HasIconsLeft
+  | HasIconsRight
   | HasShadow
+  | HasDropdown
+  | HasName
 
   | IsFluid
     deriving (Eq, Show)
 
-addClasses :: Text -> [BulmaModifier] -> [P.Attribute] -> [P.Attribute]
-addClasses classNames bulmaModifiers as = as'
+addClasses :: forall model action. MisoString -> [BulmaModifier] -> [Attribute model action] -> [Attribute model action]
+addClasses baseClass bulmaModifiers as = P.class_ (toMisoString allClasses) : otherAttributes
   where
-    newClasses = map (,True) $ classNames : bulmaToText bulmaModifiers
+    newClasses = baseClass : bulmaToText bulmaModifiers
 
-    as' = case currentClasses of
-      Nothing -> classList newClasses : removedClass
-      Just c  -> classList ((c, True) : newClasses) : removedClass
+    allClasses :: MisoString
+    allClasses = unwords $ case currentClasses of
+      Nothing -> newClasses
+      Just c  -> c : newClasses
 
-    currentClasses :: Maybe Text
-    currentClasses = listToMaybe [ v | KV _ "class" v <- as ]
+    currentClasses :: Maybe MisoString
+    currentClasses = listToMaybe [ v | Property "class" (String v) <- as ]
 
-    removedClass :: [P.Attribute]
-    removedClass = filter go as
+    otherAttributes :: [Attribute model action]
+    otherAttributes = filter (not . isClassProperty) as
       where
-        go :: P.Attribute -> Bool
-        go (KV _ "class" _) = False
-        go _ = True
+        isClassProperty :: Attribute model action -> Bool
+        isClassProperty (Property "class" _) = True
+        isClassProperty _ = False
 
-bulmaToText :: [BulmaModifier] -> [Text]
+bulmaToText :: [BulmaModifier] -> [MisoString]
 bulmaToText = map go
   where
-    go :: BulmaModifier -> Text
+    go :: BulmaModifier -> MisoString
     go Is1 = "is-1"
     go Is2 = "is-2"
     go Is3 = "is-3"
@@ -163,302 +202,407 @@ bulmaToText = map go
     go Is64By64 = "is-64x64"
     go Is96By96 = "is-96x96"
     go Is128By128 = "is-128x128"
-    go x = T.pack . camelTo2 '-' . show $ x
+    go x = pack . camelTo2 '-' . show $ x
 
--- Grid
-columns :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-columns bms as = div (addClasses "columns" bms as)
+-----------------------------------------------------------------------------
+-- Grid / Layout
+-----------------------------------------------------------------------------
 
-column :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-column bms as = div (addClasses "column" bms as)
+columns :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+columns bms as = div_ (addClasses "columns" bms as)
 
-container :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-container bms as = Html.div (addClasses "container" bms as)
+column :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+column bms as = div_ (addClasses "column" bms as)
 
-hero :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-hero bms = Html.section . addClasses "hero" bms
+container :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+container bms as = div_ (addClasses "container" bms as)
 
-heroHead :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-heroHead bms = div . addClasses "hero-head" bms
+block :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+block bms as = div_ (addClasses "block" bms as)
 
-heroBody :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-heroBody bms = div . addClasses "hero-body" bms
+hero :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+hero bms = section_ . addClasses "hero" bms
 
-heroFoot :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-heroFoot bms = div . addClasses "hero-foot" bms
+heroHead :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+heroHead bms = div_ . addClasses "hero-head" bms
 
-section :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-section bms = Html.section . addClasses "section" bms
+heroBody :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+heroBody bms = div_ . addClasses "hero-body" bms
 
-footer :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-footer bms = Html.footer . addClasses "footer" bms
+heroFoot :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+heroFoot bms = div_ . addClasses "hero-foot" bms
 
+section :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+section bms = section_ . addClasses "section" bms
+
+footer :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+footer bms = footer_ . addClasses "footer" bms
+
+tile :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+tile bms = div_ . addClasses "tile" bms
+
+level :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+level bms = nav_ . addClasses "level" bms
+
+levelLeft :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+levelLeft bms = div_ . addClasses "level-left" bms
+
+levelRight :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+levelRight bms = div_ . addClasses "level-right" bms
+
+levelItem :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+levelItem bms = div_ . addClasses "level-item" bms
+
+media :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+media bms = div_ . addClasses "media" bms
+
+articleMedia :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+articleMedia bms = article_ . addClasses "media" bms
+
+mediaContent :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+mediaContent bms = div_ . addClasses "media-content" bms
+
+mediaLeft :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+mediaLeft bms = div_ . addClasses "media-left" bms
+
+mediaRight :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+mediaRight bms = div_ . addClasses "media-right" bms
+
+mediaLeftFigure :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+mediaLeftFigure bms = figure_ . addClasses "media-left" bms
+
+-----------------------------------------------------------------------------
+-- Elements
+-----------------------------------------------------------------------------
+
+icon :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+icon bms = span_ . addClasses "icon" bms
+
+box :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+box bms = div_ . addClasses "box" bms
+
+button :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+button bms = button_ . addClasses "button" bms
+
+aButton :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+aButton bms = a_ . addClasses "button" bms
+
+buttons :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+buttons bms = div_ . addClasses "buttons" bms
+
+content :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+content bms = div_ . addClasses "content" bms
+
+deleteButton :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+deleteButton bms = button_ . addClasses "delete" bms
+
+heading :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+heading bms = p_ . addClasses "heading" bms
+
+image :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+image bms = figure_ . addClasses "image" bms
+
+link :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+link bms = a_ . addClasses "link" bms
+
+notification :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+notification bms = div_ . addClasses "notification" bms
+
+pNotification :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+pNotification bms = p_ . addClasses "notification" bms
+
+progress :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+progress bms = progress_ . addClasses "progress" bms
+
+table :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+table bms = table_ . addClasses "table" bms
+
+tag :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+tag bms = span_ . addClasses "tag" bms
+
+tags :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+tags bms = div_ . addClasses "tags" bms
+
+title :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+title bms = h1_ . addClasses "title" bms
+
+pTitle :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+pTitle bms = p_ . addClasses "title" bms
+
+subtitle :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+subtitle bms = h2_ . addClasses "subtitle" bms
+
+pSubtitle :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+pSubtitle bms = p_ . addClasses "subtitle" bms
+
+title1 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+title1 bms = h1_ . addClasses "title" (Is1 : bms)
+
+title2 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+title2 bms = h2_ . addClasses "title" (Is2 : bms)
+
+title3 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+title3 bms = h3_ . addClasses "title" (Is3 : bms)
+
+title4 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+title4 bms = h4_ . addClasses "title" (Is4 : bms)
+
+title5 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+title5 bms = h5_ . addClasses "title" (Is5 : bms)
+
+title6 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+title6 bms = h6_ . addClasses "title" (Is6 : bms)
+
+subtitle1 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+subtitle1 bms = h1_ . addClasses "subtitle" (Is1 : bms)
+
+subtitle2 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+subtitle2 bms = h2_ . addClasses "subtitle" (Is2 : bms)
+
+subtitle3 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+subtitle3 bms = h3_ . addClasses "subtitle" (Is3 : bms)
+
+subtitle4 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+subtitle4 bms = h4_ . addClasses "subtitle" (Is4 : bms)
+
+subtitle5 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+subtitle5 bms = h5_ . addClasses "subtitle" (Is5 : bms)
+
+subtitle6 :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+subtitle6 bms = h6_ . addClasses "subtitle" (Is6 : bms)
+
+-----------------------------------------------------------------------------
+-- Form
+-----------------------------------------------------------------------------
+
+label :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+label bms = label_ . addClasses "label" bms
+
+field :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+field bms = div_ . addClasses "field" bms
+
+fieldLabel :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+fieldLabel bms = div_ . addClasses "field-label" bms
+
+fieldBody :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+fieldBody bms = div_ . addClasses "field-body" bms
+
+help :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+help bms = p_ . addClasses "help" bms
+
+control :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+control bms = div_ . addClasses "control" bms
+
+input :: [BulmaModifier] -> [Attribute model action] -> View context props model action
+input bms as = input_ (addClasses "input" bms as)
+
+textarea :: [BulmaModifier] -> [Attribute model action] -> View context props model action
+textarea bms as = textarea_ (addClasses "textarea" bms as)
+
+selectSpan :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+selectSpan bms = span_ . addClasses "select" bms
+
+checkboxLabel :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+checkboxLabel bms = label_ . addClasses "checkbox" bms
+
+checkbox :: [BulmaModifier] -> [Attribute model action] -> View context props model action
+checkbox bms as = input_ (addClasses "checkbox" bms as)
+
+radioLabel :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+radioLabel bms = label_ . addClasses "radio" bms
+
+radio :: [BulmaModifier] -> [Attribute model action] -> View context props model action
+radio bms as = input_ (addClasses "radio" bms as)
+
+file :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+file bms = div_ . addClasses "file" bms
+
+fileLabel :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+fileLabel bms = label_ . addClasses "file-label" bms
+
+fileInput :: [BulmaModifier] -> [Attribute model action] -> View context props model action
+fileInput bms as = input_ (addClasses "file-input" bms as)
+
+fileCta :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+fileCta bms = span_ . addClasses "file-cta" bms
+
+fileIcon :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+fileIcon bms = span_ . addClasses "file-icon" bms
+
+fileText :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+fileText bms = span_ . addClasses "file-label" bms
+
+fileName :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+fileName bms = span_ . addClasses "file-name" bms
+
+-----------------------------------------------------------------------------
 -- Components
+-----------------------------------------------------------------------------
 
-card :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-card bms = Html.div . addClasses "card" bms
+card :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+card bms = div_ . addClasses "card" bms
 
-cardImage :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-cardImage bms = Html.div . addClasses "card-image" bms
+cardImage :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+cardImage bms = div_ . addClasses "card-image" bms
 
-cardContent :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-cardContent bms = Html.div . addClasses "card-content" bms
+cardContent :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+cardContent bms = div_ . addClasses "card-content" bms
 
-cardHeader :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-cardHeader bms = Html.div . addClasses "card-header" bms
+cardHeader :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+cardHeader bms = header_ . addClasses "card-header" bms
 
-cardHeaderTitle :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-cardHeaderTitle bms = Html.p . addClasses "card-header-title" bms
+cardHeaderTitle :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+cardHeaderTitle bms = p_ . addClasses "card-header-title" bms
 
-cardHeaderIcon :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-cardHeaderIcon bms = Html.a . addClasses "card-header-icon" bms
+cardHeaderIcon :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+cardHeaderIcon bms = a_ . addClasses "card-header-icon" bms
 
-cardFooter :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-cardFooter bms = Html.a . addClasses "card-footer" bms
+cardFooter :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+cardFooter bms = footer_ . addClasses "card-footer" bms
 
-cardFooterItem :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-cardFooterItem bms = Html.a . addClasses "card-footer-item" bms
+cardFooterItem :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+cardFooterItem bms = a_ . addClasses "card-footer-item" bms
 
-media :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-media bms = Html.div . addClasses "media" bms
+breadcrumb :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+breadcrumb bms = nav_ . addClasses "breadcrumb" bms
 
-articleMedia :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-articleMedia bms = Html.article . addClasses "media" bms
+dropdown :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+dropdown bms = div_ . addClasses "dropdown" bms
 
-mediaContent :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-mediaContent bms = Html.div . addClasses "media-content" bms
+dropdownTrigger :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+dropdownTrigger bms = div_ . addClasses "dropdown-trigger" bms
 
-mediaLeft :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-mediaLeft bms = Html.div . addClasses "media-left" bms
+dropdownMenu :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+dropdownMenu bms = div_ . addClasses "dropdown-menu" bms
 
-mediaLeftFigure :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-mediaLeftFigure bms = Html.figure . addClasses "media-left" bms
+dropdownContent :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+dropdownContent bms = div_ . addClasses "dropdown-content" bms
 
-level :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-level bms = Html.nav . addClasses "level" bms
+dropdownItem :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+dropdownItem bms = div_ . addClasses "dropdown-item" bms
 
-levelLeft :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-levelLeft bms = Html.div . addClasses "level-left" bms
+dropdownItemA :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+dropdownItemA bms = a_ . addClasses "dropdown-item" bms
 
-levelRight :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-levelRight bms = Html.div . addClasses "level-right" bms
+dropdownDivider :: [BulmaModifier] -> [Attribute model action] -> View context props model action
+dropdownDivider bms as = hr_ (addClasses "dropdown-divider" bms as)
 
-levelItem :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-levelItem bms = Html.div . addClasses "level-item" bms
+menu :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+menu bms = aside_ . addClasses "menu" bms
 
--- elements
-icon :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-icon bms = Html.span . addClasses "icon" bms
+menuLabel :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+menuLabel bms = p_ . addClasses "menu-label" bms
 
-box :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-box bms = Html.div . addClasses "box" bms
+menuList :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+menuList bms = ul_ . addClasses "menu-list" bms
 
-label :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-label bms = Html.label . addClasses "label" bms
+message :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+message bms = article_ . addClasses "message" bms
 
-selectSpan :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-selectSpan bms = Html.span . addClasses "select" bms
+messageHeader :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+messageHeader bms = div_ . addClasses "message-header" bms
 
-checkboxLabel :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-checkboxLabel bms = Html.label . addClasses "checkbox" bms
+messageBody :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+messageBody bms = div_ . addClasses "message-body" bms
 
-checkbox :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-checkbox bms = Html.input . addClasses "checkbox" bms
+modal :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modal bms = div_ . addClasses "modal" bms
 
-radioLabel :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-radioLabel bms = Html.label . addClasses "radio" bms
+modalBackground :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalBackground bms = div_ . addClasses "modal-background" bms
 
-radio :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-radio bms = Html.input . addClasses "radio" bms
+modalContent :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalContent bms = div_ . addClasses "modal-content" bms
 
-tag :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-tag bms = Html.span . addClasses "tag" bms
+modalClose :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalClose bms = button_ . addClasses "modal-close" bms
 
-tile :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-tile bms = Html.div . addClasses "tile" bms
+modalCard :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalCard bms = div_ . addClasses "modal-card" bms
 
-textarea :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-textarea bms = Html.p . addClasses "textarea" bms
+modalCardHead :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalCardHead bms = header_ . addClasses "modal-card-head" bms
 
-control :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-control bms = Html.div . addClasses "control" bms
+modalCardTitle :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalCardTitle bms = p_ . addClasses "modal-card-title" bms
 
-controlLabel :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-controlLabel bms = Html.div . addClasses "control-label" bms
+modalCardBody :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalCardBody bms = section_ . addClasses "modal-card-body" bms
 
-image :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-image bms = Html.figure . addClasses "image" bms
+modalCardFoot :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+modalCardFoot bms = footer_ . addClasses "modal-card-foot" bms
 
-link :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-link bms = Html.a . addClasses "link" bms
+navbar :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbar bms = nav_ . addClasses "navbar" bms
 
-button :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-button bms = Html.button . addClasses "button" bms
+navbarBrand :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarBrand bms = div_ . addClasses "navbar-brand" bms
 
-aButton :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-aButton bms = Html.a . addClasses "button" bms
+navbarBurger :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarBurger bms = a_ . addClasses "navbar-burger" bms
 
-input :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-input bms = Html.input . addClasses "input" bms
+navbarMenu :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarMenu bms = div_ . addClasses "navbar-menu" bms
 
-content :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-content bms = Html.div . addClasses "content" bms
+navbarStart :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarStart bms = div_ . addClasses "navbar-start" bms
 
-heading :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-heading bms = div . addClasses "heading" bms
+navbarEnd :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarEnd bms = div_ . addClasses "navbar-end" bms
 
-title :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-title bms = h1 . addClasses "title" bms
+navbarItem :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarItem bms = a_ . addClasses "navbar-item" bms
 
-notification :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-notification bms = div . addClasses "notification" bms
+navbarItemDiv :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarItemDiv bms = div_ . addClasses "navbar-item" bms
 
-pNotification :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-pNotification bms = p . addClasses "notification" bms
+navbarLink :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarLink bms = div_ . addClasses "navbar-link" bms
 
-deleteButton :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-deleteButton bms = Html.button . addClasses "delete" bms
+navbarDropdown :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+navbarDropdown bms = div_ . addClasses "navbar-dropdown" bms
 
-progress :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-progress bms = Html.progress . addClasses "progress" bms
+navbarDivider :: [BulmaModifier] -> [Attribute model action] -> View context props model action
+navbarDivider bms as = hr_ (addClasses "navbar-divider" bms as)
 
-pTitle :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-pTitle bms = p . addClasses "title" bms
+pagination :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+pagination bms = nav_ . addClasses "pagination" bms
 
-subtitle :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-subtitle bms = h2 . addClasses "subtitle" bms
+paginationPrevious :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+paginationPrevious bms = a_ . addClasses "pagination-previous" bms
 
-table :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-table bms = h2 . addClasses "table" bms
+paginationNext :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+paginationNext bms = a_ . addClasses "pagination-next" bms
 
-pSubtitle :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-pSubtitle bms = p . addClasses "subtitle" bms
+paginationList :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+paginationList bms = ul_ . addClasses "pagination-list" bms
 
-tabs :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-tabs bms = div . addClasses "tabs" bms
+paginationLink :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+paginationLink bms = a_ . addClasses "pagination-link" bms
 
-navPanel :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-navPanel bms = Html.nav . addClasses "panel" bms
+paginationEllipsis :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+paginationEllipsis bms = span_ . addClasses "pagination-ellipsis" bms
 
-panel :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-panel bms = div . addClasses "panel" bms
+panel :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+panel bms = nav_ . addClasses "panel" bms
 
-panelHeading :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-panelHeading bms = p . addClasses "panel-heading" bms
+panelHeading :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+panelHeading bms = p_ . addClasses "panel-heading" bms
 
-panelTabs :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-panelTabs bms = p . addClasses "panel-tabs" bms
+panelTabs :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+panelTabs bms = p_ . addClasses "panel-tabs" bms
 
-panelIcon :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-panelIcon bms = Html.span . addClasses "panel-icon" bms
+panelIcon :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+panelIcon bms = span_ . addClasses "panel-icon" bms
 
-panelBlock :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-panelBlock bms = div . addClasses "panel-block" bms
+panelBlock :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+panelBlock bms = div_ . addClasses "panel-block" bms
 
-panelBlockA :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-panelBlockA bms = a . addClasses "panel-block" bms
+panelBlockA :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+panelBlockA bms = a_ . addClasses "panel-block" bms
 
-panelCheckboxLabel :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-panelCheckboxLabel bms = Html.label . addClasses "panel-checkbox" bms
+panelCheckboxLabel :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+panelCheckboxLabel bms = label_ . addClasses "panel-block" bms
 
-pagination :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-pagination bms = Html.nav . addClasses "pagination" bms
-
-nav :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-nav bms = Html.nav . addClasses "nav" bms
-
-navLeft :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-navLeft bms = Html.div . addClasses "nav-left" bms
-
-navCenter :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-navCenter bms = Html.div . addClasses "nav-center" bms
-
-navRight :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-navRight bms = Html.div . addClasses "nav-right" bms
-
-navItem :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-navItem bms = Html.a . addClasses "nav-item" bms
-
-navToggle :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-navToggle bms = Html.span . addClasses "nav-toggle" bms
-
-modal :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modal bms = Html.div . addClasses "modal" bms
-
-modalBackground :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalBackground bms = Html.div . addClasses "modal-background" bms
-
-modalContainer :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalContainer bms = Html.div . addClasses "modal-container" bms
-
-modalContent :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalContent bms = Html.div . addClasses "modal-content" bms
-
-modalClose :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalClose bms = Html.button . addClasses "modal-close" bms
-
-modalCard :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalCard bms = Html.div . addClasses "modal-card" bms
-
-modalCardHead :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalCardHead bms = Html.header . addClasses "modal-card-head" bms
-
-modalCardFoot :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalCardFoot bms = Html.footer . addClasses "modal-card-foot" bms
-
-modalCardTitle :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-modalCardTitle bms = Html.p . addClasses "modal-card-title" bms
-
-message :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-message bms = Html.article . addClasses "message" bms
-
-messageHeader :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-messageHeader bms = Html.article . addClasses "message-header" bms
-
-messageBody :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-messageBody bms = Html.article . addClasses "message-body" bms
-
-menu :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-menu bms = Html.aside . addClasses "menu" bms
-
-menuLabel :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-menuLabel bms = Html.p . addClasses "menu-label" bms
-
-menuList :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-menuList bms = Html.ul . addClasses "menu-list" bms
-
-title1 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-title1 bms = Html.h1 . addClasses "title" (Is1 : bms)
-
-title2 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-title2 bms = Html.h2 . addClasses "title" (Is2 : bms)
-
-title3 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-title3 bms = Html.h3 . addClasses "title" (Is3 : bms)
-
-title4 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-title4 bms = Html.h4 . addClasses "title" (Is4 : bms)
-
-title5 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-title5 bms = Html.h5 . addClasses "title" (Is5 : bms)
-
-title6 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-title6 bms = Html.h6 . addClasses "title" (Is6 : bms)
-
-subtitle1 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-subtitle1 bms = Html.h1 . addClasses "subtitle" (Is1 : bms)
-
-subtitle2 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-subtitle2 bms = Html.h2 . addClasses "subtitle" (Is2 : bms)
-
-subtitle3 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-subtitle3 bms = Html.h3 . addClasses "subtitle" (Is3 : bms)
-
-subtitle4 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-subtitle4 bms = Html.h4 . addClasses "subtitle" (Is4 : bms)
-
-subtitle5 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-subtitle5 bms = Html.h5 . addClasses "subtitle" (Is5 : bms)
-
-subtitle6 :: [BulmaModifier] -> [P.Attribute] -> [View action model] -> View action model
-subtitle6 bms = Html.h6 . addClasses "subtitle" (Is6 : bms)
+tabs :: [BulmaModifier] -> [Attribute model action] -> [View context props model action] -> View context props model action
+tabs bms = div_ . addClasses "tabs" bms

@@ -25,10 +25,9 @@ common wasm
 
 library
   import:
-    wasm,
     warnings
-  build-depends: base < 5, containers >= 0.7, miso
-  other-modules:
+  build-depends: base < 5, containers >= 0.7, miso, aeson, text
+  exposed-modules:
     Bulma
   hs-source-dirs:
     lib
@@ -40,7 +39,7 @@ executable bulma-example
     wasm, warnings
   main-is:
     Main.hs
-  build-depends: base < 5, containers >= 0.7, miso
+  build-depends: base < 5, containers >= 0.7, miso, miso-bulma
   hs-source-dirs:
     app
   default-language:
